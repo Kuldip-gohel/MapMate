@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MapMate — Smart Nearby Places Explorer</title>
+  <meta name="description" content="MapMate: discover nearby restaurants, cafés, hospitals, pharmacies, ATMs, parks, libraries and supermarkets using live OpenStreetMap data." />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet (CSS) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <!-- Tailwind CSS (official CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    if (window.tailwind) {
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+              display: ['"Plus Jakarta Sans"', 'Inter', 'sans-serif']
+            },
+            colors: {
+              forest: { 50: '#f0faf5', 100: '#d9f2e5', 600: '#0f6b46', 700: '#0b5538', 800: '#0a4630', 900: '#073324', 950: '#04221a' }
+            }
+          }
+        }
+      };
+    }
+  </script>
+
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #f4fbf7; color: #0f2a20; overflow-x: hidden; }
+    .font-display { font-family: "Plus Jakarta Sans", Inter, sans-serif; }
+
+    /* Entrance animations (only hidden when JS is running) */
+    .js .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+    .js .reveal.in { opacity: 1; transform: none; }
+    .delay-1 { transition-delay: .08s; } .delay-2 { transition-delay: .16s; } .delay-3 { transition-delay: .24s; }
+
+    /* Floating decoration */
+    @keyframes float { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-14px) rotate(3deg); } }
+    @keyframes drift { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(18px,-12px) scale(1.06); } }
+    .float-a { animation: float 7s ease-in-out infinite; }
+    .float-b { animation: float 9s ease-in-out infinite reverse; }
+    .drift { animation: drift 12s ease-in-out infinite; }
+
+    /* Spinners */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { width: 1.1rem; height: 1.1rem; border: 2.5px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+    .spinner-lg { width: 2.5rem; height: 2.5rem; border: 4px solid rgba(5,150,105,.2); border-top-color: #059669; border-radius: 50%; animation: spin .8s linear infinite; }
+
+    /* Cards */
+    .place-card { transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease; }
+    .place-card:hover { transform: translateY(-2px); box-shadow: 0 14px 30px -14px rgba(6,95,70,.35); }
+    .place-card.is-selected { border-color: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.25), 0 14px 30px -14px rgba(6,95,70,.35); background: #f0fdf7; }
+    @keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    .card-in { animation: cardIn .45s ease both; }
+
+    /* Leaflet markers */
+    .mm-pin-wrap, .mm-origin-wrap { background: transparent; border: 0; }
+    .mm-pin { width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: linear-gradient(135deg, #10b981, #047857); transform: rotate(-45deg); display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(4,120,87,.45); border: 2px solid #fff; transition: transform .2s ease; }
+    .mm-pin span { transform: rotate(45deg); color: #fff; font: 700 11px/1 Inter, sans-serif; }
+    .mm-pin-wrap.is-selected .mm-pin { background: linear-gradient(135deg, #f59e0b, #d97706); transform: rotate(-45deg) scale(1.25); }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,.55); } 100% { box-shadow: 0 0 0 18px rgba(16,185,129,0); } }
+    .mm-origin { width: 22px; height: 22px; border-radius: 50%; background: #065f46; border: 4px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35); animation: pulse 2s ease-out infinite; }
+    .leaflet-popup-content { margin: 12px 14px; font-family: Inter, sans-serif; }
+    .leaflet-container { font-family: Inter, sans-serif; }
+
+    /* Map height */
+    #map { height: 380px; width: 100%; border-radius: 1rem; z-index: 0; }
+    @media (min-width: 640px) { #map { height: 480px; } }
+    @media (min-width: 1024px) { #map { height: 600px; } }
+    #placeList { scrollbar-width: thin; scrollbar-color: #86d9b4 transparent; }
+    @media (min-width: 1024px) { #placeList { max-height: 640px; overflow-y: auto; padding-right: .35rem; } }
+
+    :focus-visible { outline: 3px solid #34d399; outline-offset: 2px; }
+
+    /* Respect reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+      .js .reveal { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+
+<body class="min-h-screen antialiased">
+  <a href="#explore" class="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-emerald-800">Skip to results</a>
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="sticky top-0 z-40 border-b border-emerald-100/70 bg-white/80 backdrop-blur-md">
+    <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
+      <a href="#top" class="flex items-center gap-2.5" aria-label="MapMate home">
+        <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-forest-800 shadow-lg shadow-emerald-700/30">
+          <svg viewBox="0 0 24 24" class="h-6 w-6 text-white" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>
+        </span>
+        <span class="font-display text-xl font-extrabold tracking-tight text-forest-900">Map<span class="text-emerald-600">Mate</span></span>
+      </a>
+
+      <nav class="hidden items-center gap-7 text-sm font-medium text-forest-800 md:flex" aria-label="Primary">
+        <a class="transition hover:text-emerald-600" href="#top">Search</a>
+        <a class="transition hover:text-emerald-600" href="#explore">Results</a>
+        <a class="transition hover:text-emerald-600" href="#how">How it works</a>
+        <a class="transition hover:text-emerald-600" href="#why">Why MapMate</a>
+      </nav>
+
+      <button id="mobileMenuBtn" type="button" class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-200 bg-white text-forest-800 transition hover:bg-emerald-50 md:hidden" aria-expanded="false" aria-controls="mobileMenu" aria-label="Toggle navigation menu">
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+    <div id="mobileMenu" class="hidden border-t border-emerald-100 bg-white px-4 pb-4 pt-2 md:hidden">
+      <a class="block rounded-lg px-3 py-2.5 text-sm font-medium text-forest-800 hover:bg-emerald-50" href="#top">Search</a>
+      <a class="block rounded-lg px-3 py-2.5 text-sm font-medium text-forest-800 hover:bg-emerald-50" href="#explore">Results</a>
+      <a class="block rounded-lg px-3 py-2.5 text-sm font-medium text-forest-800 hover:bg-emerald-50" href="#how">How it works</a>
+      <a class="block rounded-lg px-3 py-2.5 text-sm font-medium text-forest-800 hover:bg-emerald-50" href="#why">Why MapMate</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ===================== HERO ===================== -->
+    <section class="relative overflow-hidden bg-gradient-to-b from-emerald-50 via-white to-[#f4fbf7]">
+      <!-- decorative layers -->
+      <div class="pointer-events-none absolute inset-0" aria-hidden="true">
+        <div class="drift absolute -left-24 top-10 h-72 w-72 rounded-full bg-emerald-300/30 blur-3xl"></div>
+        <div class="drift absolute -right-20 top-40 h-80 w-80 rounded-full bg-teal-300/25 blur-3xl" style="animation-delay:-4s"></div>
+        <div class="float-a absolute left-[6%] top-[22%] hidden h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl shadow-xl shadow-emerald-900/10 lg:flex">☕</div>
+        <div class="float-b absolute right-[7%] top-[18%] hidden h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl shadow-xl shadow-emerald-900/10 lg:flex">🌳</div>
+        <div class="float-b absolute left-[10%] bottom-[14%] hidden h-12 w-12 items-center justify-center rounded-2xl bg-white text-xl shadow-xl shadow-emerald-900/10 lg:flex">💊</div>
+        <div class="float-a absolute right-[11%] bottom-[16%] hidden h-12 w-12 items-center justify-center rounded-2xl bg-white text-xl shadow-xl shadow-emerald-900/10 lg:flex">📚</div>
+      </div>
+
+      <div class="relative mx-auto max-w-5xl px-4 pb-14 pt-12 text-center sm:px-6 sm:pt-16 lg:pt-20">
+        <span class="reveal inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white/80 px-3.5 py-1.5 text-xs font-semibold text-emerald-800 shadow-sm">
+          <span class="h-2 w-2 rounded-full bg-emerald-500"></span> Powered by live OpenStreetMap data
+        </span>
+
+        <h1 class="reveal delay-1 font-display mt-5 text-4xl font-extrabold leading-tight tracking-tight text-forest-900 sm:text-5xl lg:text-6xl">
+          Discover More.<br class="sm:hidden" />
+          <span class="bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 bg-clip-text text-transparent">Explore Smarter.</span>
+        </h1>
+        <p class="reveal delay-2 mx-auto mt-5 max-w-2xl text-base leading-relaxed text-forest-800/80 sm:text-lg">
+          New to an area? Pick a place, a category and a radius — MapMate finds what's nearby and shows it as a ranked list and an interactive map, nearest first.
+        </p>
+
+        <!-- SEARCH CARD -->
+        <div class="reveal delay-3 mx-auto mt-9 max-w-4xl rounded-3xl border border-emerald-100 bg-white p-4 text-left shadow-2xl shadow-emerald-900/10 sm:p-6">
+          <form id="searchForm" novalidate autocomplete="off" class="grid gap-4 md:grid-cols-12">
+            <div class="md:col-span-12 lg:col-span-5">
+              <label for="location" class="mb-1.5 block text-sm font-semibold text-forest-800">Location</label>
+              <div class="relative">
+                <svg viewBox="0 0 24 24" class="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input id="location" name="location" type="text" maxlength="120" required placeholder="City, locality, landmark or address"
+                  class="w-full rounded-xl border border-emerald-200 bg-emerald-50/40 py-3 pl-11 pr-3 text-[15px] text-forest-900 placeholder-forest-800/40 transition focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-emerald-200/60"
+                  aria-describedby="locationHint" />
+              </div>
+              <p id="locationHint" class="mt-1.5 min-h-[1.25rem] text-xs text-forest-800/60" aria-live="polite">Try “Indiranagar, Bengaluru” or “Cubbon Park”.</p>
+            </div>
+
+            <div class="md:col-span-6 lg:col-span-3">
+              <label for="category" class="mb-1.5 block text-sm font-semibold text-forest-800">Category</label>
+              <select id="category" name="category" class="w-full rounded-xl border border-emerald-200 bg-emerald-50/40 px-3.5 py-3 text-[15px] text-forest-900 transition focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-emerald-200/60">
+                <option value="restaurant">🍽️ Restaurants</option>
+                <option value="cafe">☕ Cafés</option>
+                <option value="hospital">🏥 Hospitals</option>
+                <option value="pharmacy">💊 Pharmacies</option>
+                <option value="atm">🏧 ATMs</option>
+                <option value="park">🌳 Parks</option>
+                <option value="library">📚 Libraries</option>
+                <option value="supermarket">🛒 Supermarkets</option>
+              </select>
+            </div>
+
+            <div class="md:col-span-6 lg:col-span-4">
+              <label for="radius" class="mb-1.5 block text-sm font-semibold text-forest-800">Search radius</label>
+              <select id="radius" name="radius" class="w-full rounded-xl border border-emerald-200 bg-emerald-50/40 px-3.5 py-3 text-[15px] text-forest-900 transition focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-emerald-200/60">
+                <option value="1">1 km</option>
+                <option value="3" selected>3 km</option>
+                <option value="5">5 km</option>
+                <option value="10">10 km</option>
+              </select>
+            </div>
+
+            <div class="flex flex-col gap-3 sm:flex-row md:col-span-12">
+              <button id="searchBtn" type="submit" class="inline-flex flex-1 items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-forest-700 px-6 py-3.5 text-[15px] font-bold text-white shadow-lg shadow-emerald-700/30 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-emerald-700/40 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0">
+                <span id="searchSpinner" class="spinner hidden" aria-hidden="true"></span>
+                <svg id="searchIcon" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <span id="searchBtnLabel">Search nearby places</span>
+              </button>
+              <button id="cancelBtn" type="button" class="hidden items-center justify-center rounded-xl border border-amber-300 bg-amber-50 px-5 py-3.5 text-[15px] font-semibold text-amber-800 transition hover:bg-amber-100">Cancel</button>
+              <button id="resetBtn" type="button" class="inline-flex items-center justify-center rounded-xl border border-emerald-200 bg-white px-5 py-3.5 text-[15px] font-semibold text-forest-800 transition hover:-translate-y-0.5 hover:bg-emerald-50 sm:w-36">Reset</button>
+            </div>
+          </form>
+
+          <p id="categoryHint" class="mt-3 text-sm text-forest-800/70" aria-live="polite">Selected: <strong>Restaurants</strong> within <strong>3 km</strong>.</p>
+          <p id="formStatus" class="mt-1 min-h-[1.25rem] text-sm font-medium text-forest-800" role="status" aria-live="polite"></p>
+
+          <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-emerald-100 pt-4">
+            <span class="text-xs font-semibold uppercase tracking-wide text-forest-800/50">Quick start</span>
+            <button type="button" class="example-chip rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100" data-q="Bengaluru, India">Bengaluru, India</button>
+            <button type="button" class="example-chip rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100" data-q="Indiranagar, Bengaluru">Indiranagar</button>
+            <button type="button" class="example-chip rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100" data-q="Cubbon Park, Bengaluru">Cubbon Park</button>
+            <button type="button" class="example-chip rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100" data-q="Mysuru, India">Mysuru</button>
+          </div>
+        </div>
+
+        <!-- feature badges -->
+        <ul class="mt-7 flex flex-wrap items-center justify-center gap-2.5 text-xs font-semibold text-forest-800 sm:text-sm">
+          <li class="rounded-full border border-emerald-200 bg-white px-3.5 py-1.5 shadow-sm">🗺️ Interactive map</li>
+          <li class="rounded-full border border-emerald-200 bg-white px-3.5 py-1.5 shadow-sm">📍 8 place categories</li>
+          <li class="rounded-full border border-emerald-200 bg-white px-3.5 py-1.5 shadow-sm">📏 Nearest-first ranking</li>
+          <li class="rounded-full border border-emerald-200 bg-white px-3.5 py-1.5 shadow-sm">🔓 No sign-up needed</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===================== RESULTS ===================== -->
+    <section id="explore" class="mx-auto max-w-7xl scroll-mt-20 px-4 py-10 sm:px-6">
+      <div class="reveal mb-6">
+        <h2 class="font-display text-2xl font-extrabold text-forest-900 sm:text-3xl">Nearby places</h2>
+        <p class="mt-1 text-sm text-forest-800/70">Results come from OpenStreetMap contributors. Coverage varies by area, so some places may be missing or lack details.</p>
+      </div>
+
+      <!-- summary tiles (shown after a successful search) -->
+      <div id="summary" class="mb-6 hidden grid-cols-2 gap-3 lg:grid-cols-4">
+        <div class="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
+          <p class="text-xs font-semibold uppercase tracking-wide text-forest-800/50">Places found</p>
+          <p id="sumCount" class="font-display mt-1 text-3xl font-extrabold text-emerald-600">0</p>
+        </div>
+        <div class="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
+          <p class="text-xs font-semibold uppercase tracking-wide text-forest-800/50">Category</p>
+          <p id="sumCategory" class="mt-1.5 truncate text-lg font-bold text-forest-900">—</p>
+        </div>
+        <div class="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
+          <p class="text-xs font-semibold uppercase tracking-wide text-forest-800/50">Radius</p>
+          <p id="sumRadius" class="mt-1.5 text-lg font-bold text-forest-900">—</p>
+        </div>
+        <div class="col-span-2 rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm lg:col-span-1">
+          <p class="text-xs font-semibold uppercase tracking-wide text-forest-800/50">Searched location</p>
+          <p id="sumLocation" class="mt-1.5 truncate text-lg font-bold text-forest-900" title="">—</p>
+        </div>
+      </div>
+
+      <div class="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+        <!-- left column: states + list -->
+        <div class="min-w-0 order-2 lg:order-1">
+          <div id="stateBox" class="rounded-3xl border border-emerald-200 bg-emerald-50/70 p-6 text-forest-900" aria-live="polite"></div>
+
+          <div id="listWrap" class="hidden">
+            <p id="limitNote" class="mb-3 text-xs text-forest-800/60"></p>
+            <div id="placeList" class="space-y-3"></div>
+          </div>
+        </div>
+
+        <!-- right column: map -->
+        <div class="order-1 min-w-0 lg:order-2">
+          <div class="rounded-3xl border border-emerald-100 bg-white p-3 shadow-xl shadow-emerald-900/5 lg:sticky lg:top-20">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+              <span id="mapBadge" class="inline-flex max-w-full items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">Default view: Bengaluru, India (not a search result)</span>
+              <span class="text-xs text-forest-800/50">© OpenStreetMap contributors</span>
+            </div>
+            <div id="map" role="region" aria-label="Interactive map of nearby places"></div>
+            <p id="mapNote" class="mt-2 px-1 text-xs text-forest-800/60">Distances are straight-line estimates, not walking or driving distances.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== HOW IT WORKS ===================== -->
+    <section id="how" class="scroll-mt-20 bg-white py-14">
+      <div class="mx-auto max-w-6xl px-4 sm:px-6">
+        <h2 class="reveal font-display text-center text-2xl font-extrabold text-forest-900 sm:text-3xl">How MapMate works</h2>
+        <div class="mt-9 grid gap-5 md:grid-cols-3">
+          <div class="reveal rounded-2xl border border-emerald-100 bg-emerald-50/50 p-6 transition hover:-translate-y-1 hover:shadow-lg">
+            <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 font-bold text-white">1</span>
+            <h3 class="mt-4 font-display text-lg font-bold text-forest-900">Locate</h3>
+            <p class="mt-1.5 text-sm leading-relaxed text-forest-800/75">Your text is sent to the Nominatim geocoder, which returns real coordinates and a readable place name.</p>
+          </div>
+          <div class="reveal delay-1 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-6 transition hover:-translate-y-1 hover:shadow-lg">
+            <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 font-bold text-white">2</span>
+            <h3 class="mt-4 font-display text-lg font-bold text-forest-900">Query</h3>
+            <p class="mt-1.5 text-sm leading-relaxed text-forest-800/75">An Overpass API query fetches matching OpenStreetMap nodes, ways and relations inside your chosen radius.</p>
+          </div>
+          <div class="reveal delay-2 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-6 transition hover:-translate-y-1 hover:shadow-lg">
+            <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 font-bold text-white">3</span>
+            <h3 class="mt-4 font-display text-lg font-bold text-forest-900">Compare</h3>
+            <p class="mt-1.5 text-sm leading-relaxed text-forest-800/75">Results are ranked by straight-line distance and linked to numbered map pins, so list and map stay in sync.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== WHY MAPMATE ===================== -->
+    <section id="why" class="mx-auto max-w-6xl scroll-mt-20 px-4 py-14 sm:px-6">
+      <div class="reveal rounded-3xl bg-gradient-to-br from-forest-900 to-forest-700 p-7 text-white shadow-2xl shadow-emerald-900/20 sm:p-10">
+        <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">Problem statement</p>
+        <p class="font-display mt-3 text-lg font-semibold leading-relaxed sm:text-xl">
+          Users exploring unfamiliar areas may need a focused way to discover nearby places by category and search radius. MapMate provides a location-based discovery workflow that combines searchable place listings with an interactive map, helping users compare nearby options and quickly locate them.
+        </p>
+      </div>
+
+      <div class="mt-8 grid gap-5 md:grid-cols-3">
+        <div class="reveal rounded-2xl border border-emerald-100 bg-white p-6 shadow-sm">
+          <h3 class="font-display font-bold text-forest-900">Focused workflow</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-forest-800/75">One form: location, category and radius. The full OpenStreetMap site is a general-purpose map; MapMate is a task-specific discovery tool built on its data.</p>
+        </div>
+        <div class="reveal delay-1 rounded-2xl border border-emerald-100 bg-white p-6 shadow-sm">
+          <h3 class="font-display font-bold text-forest-900">Ranked, comparable list</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-forest-800/75">Every place gets a number, a distance, and details such as address and opening hours when OpenStreetMap has them.</p>
+        </div>
+        <div class="reveal delay-2 rounded-2xl border border-emerald-100 bg-white p-6 shadow-sm">
+          <h3 class="font-display font-bold text-forest-900">Honest about data</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-forest-800/75">Missing fields are shown as missing. Errors say what failed. Nothing is invented or silently substituted.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-emerald-100 bg-white py-8">
+    <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-4 text-center text-xs text-forest-800/60 sm:flex-row sm:px-6 sm:text-left">
+      <p><strong class="text-forest-900">MapMate</strong> — Discover More. Explore Smarter.</p>
+      <p>Map data © <a class="underline hover:text-emerald-700" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a> (ODbL). Geocoding: Nominatim. Places: Overpass API. Map: Leaflet.</p>
+    </div>
+  </footer>
+
+  <!-- Leaflet (JS) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Replaced by app.py with an inline copy of script.js when served through Streamlit -->
+  <script src="script.js"></script>
+</body>
+</html>
